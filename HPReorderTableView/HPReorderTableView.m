@@ -40,8 +40,6 @@
     CGFloat _reorderDragViewShadowOpacity;
 }
 
-@dynamic delegate;
-
 static NSTimeInterval HPReorderTableViewAnimationDuration = 0.2;
 
 static NSString *HPReorderTableViewCellReuseIdentifier = @"HPReorderTableViewCellReuseIdentifier";
@@ -70,14 +68,14 @@ static NSString *HPReorderTableViewCellReuseIdentifier = @"HPReorderTableViewCel
 {
     _reorderGestureRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(recognizeLongPressGestureRecognizer:)];
     [self addGestureRecognizer:_reorderGestureRecognizer];
-    
+
     _reorderDragView = [[UIImageView alloc] init];
     _reorderDragView.layer.shadowColor = [UIColor blackColor].CGColor;
     _reorderDragView.layer.shadowRadius = 2;
     _reorderDragView.layer.shadowOpacity = 0.5;
     _reorderDragView.layer.shadowOffset = CGSizeMake(0, 0);
     _reorderDragView.layer.masksToBounds = NO;
-    
+
     // Data Source forwarding
     [super setDataSource:self];
     [self registerTemporaryEmptyCellClass:[UITableViewCell class]];
@@ -99,7 +97,7 @@ static NSString *HPReorderTableViewCellReuseIdentifier = @"HPReorderTableViewCel
         HPGestureRecognizerCancel(gestureRecognizer);
         return;
     }
-    
+
     switch (gestureRecognizer.state)
     {
         case UIGestureRecognizerStateBegan:
@@ -117,12 +115,24 @@ static NSString *HPReorderTableViewCellReuseIdentifier = @"HPReorderTableViewCel
 
 #pragma mark - UITableViewDataSource
 
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
+{
+    return [_realDataSource numberOfSectionsInTableView:tableView];
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if (_reorderCurrentIndexPath && [_reorderCurrentIndexPath compare:indexPath] == NSOrderedSame)
     {
         UITableViewCell *cell = [self dequeueReusableCellWithIdentifier:HPReorderTableViewCellReuseIdentifier];
+        UITableViewCell *movingCell = [self cellForRowAtIndexPath:_reorderCurrentIndexPath];
         cell.accessoryType = UITableViewCellAccessoryNone;
+        [cell.contentView addConstraint:[NSLayoutConstraint constraintWithItem:cell.contentView
+                                                                     attribute:NSLayoutAttributeHeight
+                                                                     relatedBy:NSLayoutRelationEqual toItem:nil
+                                                                     attribute:NSLayoutAttributeNotAnAttribute
+                                                                    multiplier:1.f
+                                                                      constant:movingCell.bounds.size.height]];
         return cell;
     }
     else
@@ -225,14 +235,14 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
         HPGestureRecognizerCancel(gestureRecognizer);
         return;
     }
-    
+
     UITableViewCell *cell = [self cellForRowAtIndexPath:indexPath];
     [cell setSelected:NO animated:NO];
     [cell setHighlighted:NO animated:NO];
-    
+
     UIImage *image = HPImageFromView(cell);
     _reorderDragView.image = image;
-    
+
     CGRect cellRect = [self rectForRowAtIndexPath:indexPath];
     _reorderDragView.frame = CGRectOffset(CGRectMake(0, 0, image.size.width, image.size.height), cellRect.origin.x, cellRect.origin.y);
     [self addSubview:_reorderDragView];
@@ -240,17 +250,17 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
     {
         _reorderDragView.layer.shadowOpacity = _reorderDragViewShadowOpacity;
     }
-    
+
     _reorderInitialIndexPath = indexPath;
     _reorderCurrentIndexPath = indexPath;
-    
+
     [self animateShadowOpacityFromValue:0 toValue:_reorderDragView.layer.shadowOpacity];
     [UIView animateWithDuration:HPReorderTableViewAnimationDuration animations:^{
         _reorderDragView.center = CGPointMake(self.center.x, location.y);
     }];
-    
+
     [self reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
-    
+
     _scrollDisplayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(scrollTableWithCell:)];
     [_scrollDisplayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
 }
@@ -262,9 +272,9 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
         HPGestureRecognizerCancel(gestureRecognizer);
         return;
     }
-    
+
     NSIndexPath *indexPath = _reorderCurrentIndexPath;
-    
+
     { // Reset
         [_scrollDisplayLink invalidate];
         _scrollDisplayLink = nil;
@@ -272,9 +282,9 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
         _reorderCurrentIndexPath = nil;
         _reorderInitialIndexPath = nil;
     }
-    
+
     [self animateShadowOpacityFromValue:_reorderDragView.layer.shadowOpacity toValue:0];
-    
+
     [UIView animateWithDuration:HPReorderTableViewAnimationDuration
                      animations:^{
                          CGRect rect = [self rectForRowAtIndexPath:indexPath];
@@ -282,9 +292,6 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
                      } completion:^(BOOL finished) {
                          [self reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
                          [self performSelector:@selector(removeReorderDragView) withObject:nil afterDelay:0]; // Prevent flicker
-                         if ([self.delegate respondsToSelector:@selector(tableView: didEndReorderingRowAtIndexPath:)]) {
-                           [self.delegate tableView:self didEndReorderingRowAtIndexPath:indexPath];
-                         }
                      }];
 }
 
@@ -295,14 +302,16 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
 
 - (void)reorderCurrentRowToIndexPath:(NSIndexPath*)toIndexPath
 {
-    [self beginUpdates];
-    [self moveRowAtIndexPath:toIndexPath toIndexPath:_reorderCurrentIndexPath]; // Order is important to keep the empty cell behind
-    if ([self.dataSource respondsToSelector:@selector(tableView:moveRowAtIndexPath:toIndexPath:)])
-    {
-        [self.dataSource tableView:self moveRowAtIndexPath:_reorderCurrentIndexPath toIndexPath:toIndexPath];
+    if (_reorderCurrentIndexPath.section == toIndexPath.section) {
+        [self beginUpdates];
+        [self moveRowAtIndexPath:toIndexPath toIndexPath:_reorderCurrentIndexPath]; // Order is important to keep the empty cell behind
+        if ([self.dataSource respondsToSelector:@selector(tableView:moveRowAtIndexPath:toIndexPath:)])
+        {
+            [self.dataSource tableView:self moveRowAtIndexPath:_reorderCurrentIndexPath toIndexPath:toIndexPath];
+        }
+        _reorderCurrentIndexPath = toIndexPath;
+        [self endUpdates];
     }
-    _reorderCurrentIndexPath = toIndexPath;
-    [self endUpdates];
 }
 
 #pragma mark Subclassing
@@ -340,25 +349,25 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
 - (void)didChangeLongPressGestureRecognizer:(UILongPressGestureRecognizer*)gestureRecognizer
 {
     const CGPoint location = [gestureRecognizer locationInView:self];
-    
+
     // update position of the drag view
     // don't let it go past the top or the bottom too far
     if (location.y >= 0 && location.y <= self.contentSize.height + 50)
     {
         _reorderDragView.center = CGPointMake(self.center.x, location.y);
     }
-    
+
     CGRect rect = self.bounds;
     // adjust rect for content inset as we will use it below for calculating scroll zones
     rect.size.height -= self.contentInset.top;
-    
+
     [self updateCurrentLocation:gestureRecognizer];
-    
+
     // tell us if we should scroll and which direction
     CGFloat scrollZoneHeight = rect.size.height / 6;
     CGFloat bottomScrollBeginning = self.contentOffset.y + self.contentInset.top + rect.size.height - scrollZoneHeight;
     CGFloat topScrollBeginning = self.contentOffset.y + self.contentInset.top  + scrollZoneHeight;
-    
+
     // we're in the bottom zone
     if (location.y >= bottomScrollBeginning)
     {
@@ -379,10 +388,10 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
 {
     UILongPressGestureRecognizer *gesture = self.reorderGestureRecognizer;
     const CGPoint location = [gesture locationInView:self];
-    
+
     CGPoint currentOffset = self.contentOffset;
     CGPoint newOffset = CGPointMake(currentOffset.x, currentOffset.y + _scrollRate * 10);
-    
+
     if (newOffset.y < -self.contentInset.top)
     {
         newOffset.y = -self.contentInset.top;
@@ -395,14 +404,14 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
     {
         newOffset.y = (self.contentSize.height + self.contentInset.bottom) - self.frame.size.height;
     }
-    
+
     [self setContentOffset:newOffset];
-    
+
     if (location.y >= 0 && location.y <= self.contentSize.height + 50)
     {
         _reorderDragView.center = CGPointMake(self.center.x, location.y);
     }
-    
+
     [self updateCurrentLocation:gesture];
 }
 
@@ -410,21 +419,21 @@ static void HPGestureRecognizerCancel(UIGestureRecognizer *gestureRecognizer)
 {
     const CGPoint location  = [gesture locationInView:self];
     NSIndexPath *toIndexPath = [self indexPathForRowAtPoint:location];
-    
+
     if ([self.delegate respondsToSelector:@selector(tableView:targetIndexPathForMoveFromRowAtIndexPath:toProposedIndexPath:)])
     {
         toIndexPath = [self.delegate tableView:self targetIndexPathForMoveFromRowAtIndexPath:_reorderInitialIndexPath toProposedIndexPath:toIndexPath];
     }
-    
+
     if ([toIndexPath compare:_reorderCurrentIndexPath] == NSOrderedSame) return;
-    
+
     NSInteger originalHeight = _reorderDragView.frame.size.height;
     NSInteger toHeight = [self rectForRowAtIndexPath:toIndexPath].size.height;
     UITableViewCell *toCell = [self cellForRowAtIndexPath:toIndexPath];
     const CGPoint toCellLocation = [gesture locationInView:toCell];
-    
-    if (toCellLocation.y <= toHeight - originalHeight) return;
-    
+
+    if (!toCell || toCellLocation.y <= toHeight - originalHeight) return;
+
     [self reorderCurrentRowToIndexPath:toIndexPath];
 }
 
